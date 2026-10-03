@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Средний балл</title>
+  <style>
+    body { width: 250px; margin: 0; padding: 18px; font: 14px/1.45 system-ui, sans-serif; color: #25283a; }
+    h1 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 0 0 14px; color: #6b7084; }
+    button { width: 100%; border: 0; border-radius: 10px; padding: 11px 14px; background: #4054c8; color: white; font: 600 14px system-ui; cursor: pointer; }
+    button:hover { background: #3346b5; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #status { margin-top: 10px; min-height: 18px; font-size: 12px; color: #6b7084; }
+  </style>
+</head>
+<body>
+  <h1>Средний балл</h1>
+  <p>Открой страницу электронного дневника и нажми кнопку ниже.</p>
+  <button id="run">Рассчитать оценки</button>
+  <div id="status" role="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

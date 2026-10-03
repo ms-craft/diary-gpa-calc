@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Средний балл",
+  "version": "1.0.0",
+  "description": "Считает средний балл по оценкам в электронном дневнике.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_title": "Средний балл",
+    "default_popup": "popup.html"
+  }
+}
