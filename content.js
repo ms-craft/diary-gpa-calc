@@ -35,42 +35,92 @@ return null;
 const seen=new Set();
 const data=new Map();
 let lessons=0,failed=0,dups=0,diffs=0;
+const tasks=[];
 for(const q of qs){
-for(const w of weeks){
-say(esc(q.name)+', неделя '+w+'…');
-const html=await get('/pupil/'+pid+'/dnevnik/quarter/'+q.id+'/week/'+w);
-if(html===null){failed++;continue;}
-const doc=new DOMParser().parseFromString(html,'text/html');
-const byId=new Map();
-doc.querySelectorAll('table.db_table').forEach(tbl=>{
-const prev=byId.get(tbl.id);
-if(prev){dups++;if(marksOf(prev)!==marksOf(tbl))diffs++;}
-byId.set(tbl.id,tbl);
-});
-byId.forEach((tbl,id)=>{
-const m=id.match(/db_table_(\d\d)\.(\d\d)\.(\d\d)/);
-const date=m?'20'+m[3]+'-'+m[2]+'-'+m[1]:w;
-tbl.querySelectorAll('tbody tr').forEach(tr=>{
-const lc=tr.querySelector('td.lesson');
-if(!lc)return;
-const t=clean(lc.textContent);
-const mm=t.match(/^(\d+)\.\s*(.+)$/);
-const n=mm?mm[1]:'',subject=mm?mm[2]:t;
-lessons++;
-const mc=tr.querySelector('td.mark');
-if(!mc||!subject)return;
-[...mc.querySelectorAll('.mark_box strong, strong')].map(s=>clean(s.textContent)).filter(x=>/^\d{1,2}$/.test(x)).forEach((x,i)=>{
-const key=date+'|'+n+'|'+subject+'|'+i;
-if(seen.has(key))return;
-seen.add(key);
-if(!data.has(subject))data.set(subject,[]);
-data.get(subject).push({date,n,v:+x,q:q.id});
-});
-});
-});
-await sleep(100);
+    for(const w of weeks) tasks.push({q,w});
 }
+
+let completed=0;
+const totalTasks=tasks.length;
+const CONCURRENCY=8;
+
+const updateProgress=()=>{
+    const pct=totalTasks ? Math.round(completed/totalTasks*100) : 100;
+    say('Загружаю оценки… '+completed+' / '+totalTasks+' ('+pct+'%)');
+};
+
+async function worker(){
+    while(true){
+        const task=tasks.pop();
+        if(!task)return;
+
+        const q=task.q, w=task.w;
+        const html=await get('/pupil/'+pid+'/dnevnik/quarter/'+q.id+'/week/'+w);
+
+        completed++;
+        updateProgress();
+
+        if(html===null){
+            failed++;
+            continue;
+        }
+
+        const doc=new DOMParser().parseFromString(html,'text/html');
+        const byId=new Map();
+
+        doc.querySelectorAll('table.db_table').forEach(tbl=>{
+            const prev=byId.get(tbl.id);
+            if(prev){
+                dups++;
+                if(marksOf(prev)!==marksOf(tbl))diffs++;
+            }
+            byId.set(tbl.id,tbl);
+        });
+
+        byId.forEach((tbl,id)=>{
+            const m=id.match(/db_table_(\d\d)\.(\d\d)\.(\d\d)/);
+            const date=m?'20'+m[3]+'-'+m[2]+'-'+m[1]:w;
+
+            tbl.querySelectorAll('tbody tr').forEach(tr=>{
+                const lc=tr.querySelector('td.lesson');
+                if(!lc)return;
+
+                const t=clean(lc.textContent);
+                const mm=t.match(/^(\d+)\.\s*(.+)$/);
+                const n=mm?mm[1]:'',subject=mm?mm[2]:t;
+
+                lessons++;
+
+                const mc=tr.querySelector('td.mark');
+                if(!mc||!subject)return;
+
+                [...mc.querySelectorAll('.mark_box strong, strong')]
+                    .map(s=>clean(s.textContent))
+                    .filter(x=>/^\d{1,2}$/.test(x))
+                    .forEach((x,i)=>{
+                        const key=date+'|'+n+'|'+subject+'|'+i;
+                        if(seen.has(key))return;
+                        seen.add(key);
+
+                        if(!data.has(subject))data.set(subject,[]);
+                        data.get(subject).push({
+                            date,n,v:+x,q:q.id
+                        });
+                    });
+            });
+        });
+    }
 }
+
+updateProgress();
+
+await Promise.all(
+    Array.from(
+        {length:Math.min(CONCURRENCY,totalTasks)},
+        ()=>worker()
+    )
+);
+
 if(!lessons){say('Уроков не нашлось (загрузка не удалась или разметка изменилась). Запусти ещё раз.');return;}
 if(!data.size){say('Уроков: '+lessons+', но оценок пока нет. Неудачных запросов: '+failed+'.');return;}
 const rows=[...data.entries()].map(([subject,list])=>{

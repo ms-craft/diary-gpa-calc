@@ -41,7 +41,7 @@ diary-gpa-calc/
 
 ## Технические детали
 
-- **Manifest Version:** 3
+- **Version:** 1.1.0
 - **Разрешения:** `activeTab`, `scripting`
 - **Браузеры:** Google Chrome, Microsoft Edge (и другие Chromium-браузеры)
 - Отчёт строится локально в новой вкладке; данные не отправляются на сторонние серверы
