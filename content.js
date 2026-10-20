@@ -7,9 +7,12 @@
   const MAX_RETRIES = 3;            // сколько раз повторять неудачный запрос
   const FALLBACK_QUARTER_IDS = [92, 93, 94, 95];
 
-  // Оценка за четверть выставляется округлением среднего: 9.5 и выше -> 10.
-  const TOP_MARK = 10;
-  const TOP_MARK_MIN_AVG = TOP_MARK - 0.5;
+  // Какие оценки за четверть можно выбрать как цель и какая выбрана по умолчанию.
+  // Оценка за четверть — это средний балл, округлённый до целого:
+  // чтобы стояла T, нужен средний T - 0.5 и выше.
+  const TARGET_OPTIONS = [7, 8, 9, 10];
+  const DEFAULT_TARGET = 10;
+  const MAX_MARK = 10;
 
   // ==========================================================================
   //  Мелкие утилиты
@@ -281,12 +284,18 @@
     .find((q) => allMarks.some((o) => o.q === q.id));
 
   /**
-   * Сколько десяток нужно получить, чтобы средний балл за четверть дошёл до 9.5.
+   * Сколько оценок `mark` нужно получить, чтобы средний балл за четверть
+   * дошёл до `target - 0.5` (то есть за четверть округлилось до `target`).
+   * Из условия (sum + mark*n) / (count + n) >= target - 0.5 получается
+   * n >= ((2*target - 1)*count - 2*sum) / (2*mark - 2*target + 1).
+   * Всё считается в целых числах, без ошибок округления.
    */
-  function tensNeededForTop(values) {
+  function marksNeeded(values, target, mark) {
     if (!values.length) return 1;
     const sum = values.reduce((s, x) => s + x, 0);
-    return Math.max(0, 19 * values.length - 2 * sum);
+    const deficit = (2 * target - 1) * values.length - 2 * sum;
+    if (deficit <= 0) return 0;
+    return Math.ceil(deficit / (2 * mark - 2 * target + 1));
   }
 
   // ==========================================================================
@@ -402,22 +411,56 @@
     return `<table class="tbl">${header}${body}${footer}</table>`;
   }
 
-  /** Строка под названием предмета: что нужно, чтобы за четверть стояла 10. */
-  function renderTopMarkHint(row) {
+  const markChip = (v) => `<span class="m" style="background:${colorFor(v)}">${v}</span>`;
+
+  /**
+   * Подсказка под названием предмета: что нужно получить, чтобы за текущую
+   * четверть стояла оценка `target`. Возвращает { ok, html }.
+   */
+  function buildTargetHint(row, target) {
     const qName = escapeHtml(currentQuarter.name);
     const values = row.list.filter((o) => o.q === currentQuarter.id).map((o) => o.v);
-    const needed = tensNeededForTop(values);
 
     if (!values.length) {
-      return `<div class="goal">${qName}: оценок пока нет — хватит одной <span class="m" style="background:${colorFor(TOP_MARK)}">${TOP_MARK}</span>, чтобы стояла ${TOP_MARK}</div>`;
+      return {
+        ok: false,
+        html: `${qName}: оценок пока нет — чтобы стояла ${markChip(target)}, достаточно одной оценки ${target} или выше`,
+      };
     }
-    if (needed === 0) {
-      return `<div class="goal goal-ok">${qName}: уже ${TOP_MARK} (средний ${fmt(average(values))}) ✓</div>`;
+
+    const current = average(values);
+    if (marksNeeded(values, target, MAX_MARK) === 0) {
+      const above = current >= target + 0.5 ? ' — это даже выше цели' : '';
+      return {
+        ok: true,
+        html: `${qName}: ${markChip(target)} уже есть (средний ${fmt(current)})${above} ✓`,
+      };
     }
-    return `<div class="goal">Чтобы за ${qName.toLowerCase()} стояла ${TOP_MARK}: нужно получить <b>${needed} × </b><span class="m" style="background:${colorFor(TOP_MARK)}">${TOP_MARK}</span> <span class="mut">(сейчас ${fmt(average(values))})</span></div>`;
+
+    const options = [];
+    for (let mark = MAX_MARK; mark >= target; mark--) {
+      options.push(`<b>${marksNeeded(values, target, mark)} ×</b> ${markChip(mark)}`);
+    }
+    return {
+      ok: false,
+      html:
+        `Чтобы за ${qName.toLowerCase()} стояла ${markChip(target)}, нужно получить: ` +
+        options.join(' <span class="mut">или</span> ') +
+        ` <span class="mut">(сейчас ${fmt(current)})</span>`,
+    };
   }
 
-  function renderCard(row) {
+  function renderTargetPicker(index) {
+    const buttons = TARGET_OPTIONS.map(
+      (t) =>
+        `<button class="tg${t === DEFAULT_TARGET ? ' on' : ''}" data-i="${index}" data-t="${t}">${t}</button>`
+    ).join('');
+    return `<div class="picker noprint"><span class="mut">Хочу за четверть:</span>${buttons}</div>`;
+  }
+
+  function renderCard(row, index) {
+    const hint = buildTargetHint(row, DEFAULT_TARGET);
+
     const markRows = row.list
       .map(
         (o) => `
@@ -444,7 +487,8 @@
     return `
       <div class="card">
         <h3>${escapeHtml(row.subject)}<span class="badge" style="background:${colorFor(row.avg)}">${fmt(row.avg)}</span></h3>
-        ${renderTopMarkHint(row)}
+        ${renderTargetPicker(index)}
+        <div class="goal${hint.ok ? ' goal-ok' : ''}" id="goal-${index}">${hint.html}</div>
         <table class="tbl">
           <tr><th>Дата</th><th>Урок</th><th>Оценка</th></tr>
           ${markRows}
@@ -475,6 +519,9 @@
     .card { background: white; border-radius: 14px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(20,25,60,.08); }
     .card h3 { margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; font-size: 17px; }
     .badge { border-radius: 20px; padding: 2px 12px; font-size: 15px; }
+    .picker { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13px; }
+    .picker .tg { margin: 0; padding: 3px 12px; border-radius: 8px; background: rgb(232,235,250); color: rgb(60,80,200); font-weight: 600; }
+    .picker .tg.on { background: rgb(60,80,200); color: white; }
     .goal { margin: -2px 0 10px; padding: 7px 10px; border-radius: 8px; background: rgb(244,245,250); font-size: 13px; }
     .goal-ok { background: rgb(226,245,234); color: rgb(30,110,60); }
     .tbl { border-collapse: collapse; width: 100%; }
@@ -506,7 +553,6 @@
         <div class="top">
           <h1>Оценки</h1>
           <div class="noprint">
-            <button id="dl">Скачать CSV для Excel</button>
             <button id="pr">Сохранить в PDF</button>
           </div>
         </div>
@@ -517,35 +563,10 @@
         <div class="panel"><h2>Распределение оценок</h2>${renderDistributionChart()}</div>
         <div class="panel"><h2>Сводка по четвертям</h2>${renderSummaryTable()}</div>
         <h2>Все оценки по предметам</h2>
-        <p class="note">Подсказки «чтобы стояла ${TOP_MARK}» считаются для текущей четверти (${escapeHtml(currentQuarter.name)}): оценка за четверть — это средний балл, округлённый до целого, поэтому нужно набрать ${TOP_MARK_MIN_AVG} и выше.</p>
-        <div class="grid">${rows.map(renderCard).join('')}</div>
+        <p class="note">У каждого предмета можно выбрать, какую оценку ты хочешь за четверть (${TARGET_OPTIONS[0]}–${TARGET_OPTIONS[TARGET_OPTIONS.length - 1]}). Подсказки считаются для текущей четверти (${escapeHtml(currentQuarter.name)}): оценка за четверть — это средний балл, округлённый до целого, поэтому для оценки T нужен средний T − 0.5 и выше.</p>
+        <div class="grid">${rows.map((r, i) => renderCard(r, i)).join('')}</div>
         <p class="note">Служебная проверка: повторяющихся таблиц дней — ${duplicateTables}, из них с разными отметками — ${differingDuplicates} (использована последняя копия).</p>
       </div>`;
-  }
-
-  // ==========================================================================
-  //  CSV
-  // ==========================================================================
-  const csvNumber = (x) => (x == null ? '' : fmt(x).replace('.', ','));
-  const csvText = (s) => '"' + String(s).replace(/"/g, '""') + '"';
-
-  function buildCsv() {
-    const header = 'Предмет;' + quarters.map((q) => q.name).join(';') + ';Всего;Оценки';
-
-    const subjectLines = rows.map(
-      (r) =>
-        csvText(r.subject) + ';' +
-        quarters.map((q) => csvNumber(quarterAvg(r.list, q.id))).join(';') + ';' +
-        csvNumber(r.avg) + ';' +
-        r.list.map((o) => o.v).join(';')
-    );
-
-    const totalLine =
-      csvText('ВСЕГО') + ';' +
-      quarters.map((q) => csvNumber(quarterAvg(allMarks, q.id))).join(';') + ';' +
-      csvNumber(overallAvg) + ';';
-
-    return '\ufeff' + [header, ...subjectLines, totalLine].join('\r\n');
   }
 
   // ==========================================================================
@@ -556,14 +577,22 @@
   win.document.close();
   win.document.title = 'Оценки ' + todayStamp;
 
-  const csv = buildCsv();
+  // Выбор желаемой оценки за четверть у предмета (обработчик вешаем отсюда,
+  // а не через <script> в отчёте, чтобы не упереться в CSP сайта).
+  win.document.addEventListener('click', (event) => {
+    const button = event.target.closest && event.target.closest('.tg');
+    if (!button) return;
 
-  win.document.getElementById('dl').onclick = () => {
-    const link = win.document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    link.download = 'ocenki.csv';
-    link.click();
-  };
+    const index = +button.dataset.i;
+    const target = +button.dataset.t;
+    const hint = buildTargetHint(rows[index], target);
+
+    const goal = win.document.getElementById('goal-' + index);
+    goal.className = 'goal' + (hint.ok ? ' goal-ok' : '');
+    goal.innerHTML = hint.html;
+
+    button.parentElement.querySelectorAll('.tg').forEach((b) => b.classList.toggle('on', b === button));
+  });
 
   win.document.getElementById('pr').onclick = () => {
     win.focus();
