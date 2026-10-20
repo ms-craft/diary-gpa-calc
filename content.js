@@ -5,7 +5,6 @@
   const CONCURRENCY = 8;            // сколько недель грузим параллельно
   const REQUEST_TIMEOUT_MS = 20000; // таймаут одного запроса
   const MAX_RETRIES = 3;            // сколько раз повторять неудачный запрос
-  const FALLBACK_PUPIL_ID = '3935563';
   const FALLBACK_QUARTER_IDS = [92, 93, 94, 95];
 
   // Оценка за четверть выставляется округлением среднего: 9.5 и выше -> 10.
@@ -52,7 +51,7 @@
   //  Параметры страницы: ученик, четверти, недели
   // ==========================================================================
   const pupilId =
-    (location.pathname.match(/\/pupil\/(\d+)/) || [])[1] || FALLBACK_PUPIL_ID;
+    (location.pathname.match(/\/pupil\/(\d+)/) || [])[1];
 
   let quarters = [
     ...document.querySelectorAll('[id^="db_quarters_menu_"] a[quarter_id]'),
@@ -283,8 +282,6 @@
 
   /**
    * Сколько десяток нужно получить, чтобы средний балл за четверть дошёл до 9.5.
-   * Из условия (sum + 10n) / (count + n) >= 9.5 получается n >= 19*count - 2*sum
-   * (считаем в целых числах, без ошибок округления).
    */
   function tensNeededForTop(values) {
     if (!values.length) return 1;
