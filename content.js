@@ -13,6 +13,7 @@
   const TARGET_OPTIONS = [7, 8, 9, 10];
   const DEFAULT_TARGET = 10;
   const MAX_MARK = 10;
+  const MIN_MARK = 1;
 
   // ==========================================================================
   //  Мелкие утилиты
@@ -298,6 +299,22 @@
     return Math.ceil(deficit / (2 * mark - 2 * target + 1));
   }
 
+  /**
+   * Сколько оценок `mark` можно получить (только их, без других), чтобы средний
+   * балл за четверть остался не ниже `target - 0.5`. Обратная задача к marksNeeded:
+   * из (sum + mark*n) / (count + n) >= target - 0.5 получается
+   * n <= (2*sum - (2*target - 1)*count) / (2*target - 1 - 2*mark).
+   * Если цель сейчас не выполняется — 0. Для оценок >= target ограничения нет.
+   */
+  function marksAllowed(values, target, mark) {
+    const sum = values.reduce((s, x) => s + x, 0);
+    const surplus = 2 * sum - (2 * target - 1) * values.length;
+    if (surplus < 0) return 0;
+    const denom = 2 * target - 1 - 2 * mark;
+    if (denom <= 0) return Infinity;
+    return Math.floor(surplus / denom);
+  }
+
   // ==========================================================================
   //  Отрисовка
   // ==========================================================================
@@ -414,6 +431,34 @@
   const markChip = (v) => `<span class="m" style="background:${colorFor(v)}">${v}</span>`;
 
   /**
+   * Запас, когда цель уже достигнута: какая самая низкая оценка допустима
+   * и сколько оценок каждого достоинства ниже цели можно получить.
+   */
+  function buildReserveHtml(values, target) {
+    const options = [];
+    for (let mark = target - 1; mark >= MIN_MARK; mark--) {
+      const count = marksAllowed(values, target, mark);
+      if (count < 1) break; // чем ниже оценка, тем меньше можно — дальше только нули
+      options.push({ mark, count });
+    }
+
+    if (!options.length) {
+      return `Запаса нет: любая оценка ниже ${markChip(target)} снизит средний балл ниже границы. Оценки ${target} и выше не опасны.`;
+    }
+
+    const lowest = options[options.length - 1].mark;
+    const list = options
+      .map((o) => `<b>${o.count} ×</b> ${markChip(o.mark)}`)
+      .join(' <span class="mut">или</span> ');
+
+    return (
+      `Запас: самая низкая оценка, после которой за четверть всё ещё будет ${markChip(target)} — ${markChip(lowest)}. ` +
+      `Сколько таких оценок можно получить (каждый вариант отдельно): ${list}. ` +
+      `Оценки ${target} и выше не опасны.`
+    );
+  }
+
+  /**
    * Подсказка под названием предмета: что нужно получить, чтобы за текущую
    * четверть стояла оценка `target`. Возвращает { ok, html }.
    */
@@ -433,7 +478,9 @@
       const above = current >= target + 0.5 ? ' — это даже выше цели' : '';
       return {
         ok: true,
-        html: `${qName}: ${markChip(target)} уже есть (средний ${fmt(current)})${above} ✓`,
+        html:
+          `${qName}: ${markChip(target)} уже есть (средний ${fmt(current)})${above} ✓` +
+          `<div class="reserve">${buildReserveHtml(values, target)}</div>`,
       };
     }
 
@@ -524,6 +571,7 @@
     .picker .tg.on { background: rgb(60,80,200); color: white; }
     .goal { margin: -2px 0 10px; padding: 7px 10px; border-radius: 8px; background: rgb(244,245,250); font-size: 13px; }
     .goal-ok { background: rgb(226,245,234); color: rgb(30,110,60); }
+    .reserve { margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgb(150,205,175); color: rgb(30,80,50); }
     .tbl { border-collapse: collapse; width: 100%; }
     .tbl th, .tbl td { padding: 6px 10px; text-align: left; border-bottom: 1px solid rgb(236,237,243); }
     .tbl th { background: rgb(244,245,250); font-weight: 600; font-size: 13px; }
@@ -563,7 +611,7 @@
         <div class="panel"><h2>Распределение оценок</h2>${renderDistributionChart()}</div>
         <div class="panel"><h2>Сводка по четвертям</h2>${renderSummaryTable()}</div>
         <h2>Все оценки по предметам</h2>
-        <p class="note">У каждого предмета можно выбрать, какую оценку ты хочешь за четверть (${TARGET_OPTIONS[0]}–${TARGET_OPTIONS[TARGET_OPTIONS.length - 1]}). Подсказки считаются для текущей четверти (${escapeHtml(currentQuarter.name)}): оценка за четверть — это средний балл, округлённый до целого, поэтому для оценки T нужен средний T − 0.5 и выше.</p>
+        <p class="note">У каждого предмета можно выбрать, какую оценку ты хочешь за четверть (${TARGET_OPTIONS[0]}–${TARGET_OPTIONS[TARGET_OPTIONS.length - 1]}). Подсказки считаются для текущей четверти (${escapeHtml(currentQuarter.name)}): оценка за четверть — это средний балл, округлённый до целого, поэтому для оценки T нужен средний T − 0.5 и выше. Если цель уже достигнута, показывается запас: какие низкие оценки можно получить, не потеряв её.</p>
         <div class="grid">${rows.map((r, i) => renderCard(r, i)).join('')}</div>
         <p class="note">Служебная проверка: повторяющихся таблиц дней — ${duplicateTables}, из них с разными отметками — ${differingDuplicates} (использована последняя копия).</p>
       </div>`;
