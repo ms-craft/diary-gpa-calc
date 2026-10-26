@@ -4,7 +4,7 @@
 
 **Расширение для Chrome и Edge, которое превращает электронный дневник в наглядный отчёт**
 
-![Version](https://img.shields.io/badge/version-1.3.0-4054c8)
+![Version](https://img.shields.io/badge/version-1.4.0-4054c8)
 ![Manifest](https://img.shields.io/badge/Manifest-V3-34aa64)
 ![Browsers](https://img.shields.io/badge/Chrome%20%7C%20Edge-supported-f5be3c)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
@@ -74,7 +74,7 @@ diary-gpa-calc/
 
 ## ⚙️ Технические детали
 
-- **Версия:** 1.3.0
+- **Версия:** 1.4.0
 - **Разрешения:** `activeTab`, `scripting`
 - **Браузеры:** Google Chrome, Microsoft Edge и другие Chromium-браузеры
 - **Загрузка данных:** недели с 1 сентября до сегодняшнего дня грузятся параллельно (8 запросов одновременно) с таймаутом и повторными попытками

@@ -403,6 +403,11 @@
       ? '<td class="mut">—</td>'
       : `<td style="background:${colorFor(x, 0.6)}"><b>${fmt(x)}</b></td>`;
 
+  const avgCellId = (x, id) =>
+    x == null
+      ? `<td id="${id}" class="mut">—</td>`
+      : `<td id="${id}" style="background:${colorFor(x, 0.6)}"><b>${fmt(x)}</b></td>`;
+
   function renderSummaryTable() {
     const header =
       '<tr><th>Предмет</th>' +
@@ -510,11 +515,11 @@
 
     const markRows = row.list
       .map(
-        (o) => `
+        (o, markIdx) => `
         <tr>
           <td>${formatRuDate(o.date)}</td>
           <td>${o.n ? o.n + ' урок' : ''}</td>
-          <td><span class="m" style="background:${colorFor(o.v)}">${o.v}</span></td>
+          <td id="mc-${index}-${markIdx}"><span class="m" data-card="${index}" data-mark="${markIdx}" data-orig="${o.v}" style="background:${colorFor(o.v)}">${o.v}</span></td>
         </tr>`
       )
       .join('');
@@ -526,22 +531,23 @@
         <tr>
           <td>${escapeHtml(q.name)}</td>
           <td>${count ? count + ' оц.' : ''}</td>
-          ${avgCell(quarterAvg(row.list, q.id))}
+          ${avgCellId(quarterAvg(row.list, q.id), 'qa-' + index + '-' + q.id)}
         </tr>`;
       })
       .join('');
 
     return `
-      <div class="card">
+      <div class="card" data-card="${index}">
         <h3>${escapeHtml(row.subject)}<span class="badge" style="background:${colorFor(row.avg)}">${fmt(row.avg)}</span></h3>
         ${renderTargetPicker(index)}
         <div class="goal${hint.ok ? ' goal-ok' : ''}" id="goal-${index}">${hint.html}</div>
+        <button class="reset-edit noprint" data-card="${index}">↺ сбросить правки</button>
         <table class="tbl">
           <tr><th>Дата</th><th>Урок</th><th>Оценка</th></tr>
           ${markRows}
           <tr class="head"><th colspan="3">По четвертям</th></tr>
           ${quarterRows}
-          <tr class="sum"><td>Итого</td><td>${row.list.length} оц.</td>${avgCell(row.avg)}</tr>
+          <tr class="sum"><td>Итого</td><td>${row.list.length} оц.</td>${avgCellId(row.avg, 'qa-' + index + '-total')}</tr>
         </table>
       </div>`;
   }
@@ -554,7 +560,7 @@
     .top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; }
     h1 { margin: 0; font-size: 28px; }
     h2 { margin: 0 0 12px; font-size: 18px; }
-    button { border: 0; border-radius: 10px; padding: 9px 16px; margin-left: 8px; background: rgb(60,80,200); color: white; font: inherit; cursor: pointer; }
+    button { border: 0; border-radius: 10px; padding: 9px 16px; background: rgb(60,80,200); color: white; font: inherit; cursor: pointer; }
     .hint { margin: 0 0 16px; color: rgb(120,125,140); font-size: 13px; }
     .panel { background: white; border-radius: 14px; padding: 18px 22px; margin: 0 0 20px; box-shadow: 0 1px 4px rgba(20,25,60,.08); }
     .kpis { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
@@ -586,7 +592,18 @@
       .noprint { display: none; }
       .panel, .card, .kpi { box-shadow: none; border: 1px solid rgb(225,227,235); break-inside: avoid; }
       .grid { grid-template-columns: repeat(2, 1fr); }
-    }`;
+    }
+    .m[data-mark] { cursor: pointer; }
+    .m[data-mark]:hover { filter: brightness(1.12); }
+    .m.m-changed { outline: 2px solid rgba(60,80,200,.55); outline-offset: 2px; }
+    .m-orig { font-size: 10px; text-decoration: line-through; color: rgb(170,173,190); vertical-align: middle; margin-right: 3px; }
+    .edit-picker { position: fixed; background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(20,25,60,.22); padding: 10px; display: none; flex-wrap: wrap; gap: 5px; width: 195px; z-index: 9999; }
+    .edit-picker.visible { display: flex; }
+    .ep-label { width: 100%; font-size: 11px; color: rgb(120,125,140); margin-bottom: 2px; }
+    .ep-btn { margin: 0; flex: 0 0 calc(20% - 4px); padding: 6px 0; border-radius: 8px; font-size: 13px; text-align: center; }
+    .ep-cancel { flex: 1 0 100%; margin-top: 4px; padding: 5px; border-radius: 8px; font-size: 12px; background: rgb(244,245,250); color: rgb(100,105,130); text-align: center; }
+    .reset-edit { display: none; margin: 0 0 8px; padding: 4px 10px; border-radius: 8px; font-size: 12px; background: transparent; color: rgb(100,105,130); border: 1px solid rgb(215,218,230); }
+    .reset-edit:hover { background: rgb(244,245,250); }`;
 
   function renderReport() {
     const failedWarning = failedCount
@@ -618,6 +635,68 @@
   }
 
   // ==========================================================================
+  //  Правки оценок (интерактивная замена)
+  // ==========================================================================
+  const overrides = new Map(); // cardIdx -> Map<markIdx, newValue>
+
+  /** Возвращает row с применёнными правками. */
+  function getEffRow(cardIdx) {
+    const row = rows[cardIdx];
+    const ov = overrides.get(cardIdx);
+    if (!ov || !ov.size) return row;
+    return {
+      ...row,
+      list: row.list.map((o, mi) => ov.has(mi) ? { ...o, v: ov.get(mi) } : o),
+    };
+  }
+
+  /** Пересчитывает и обновляет badge, ячейки четвертей и подсказку цели в карточке. */
+  function recalcCard(cardIdx) {
+    const effRow = getEffRow(cardIdx);
+    const effAvg = average(effRow.list.map((o) => o.v));
+
+    const card = win.document.querySelector(`.card[data-card="${cardIdx}"]`);
+    if (!card) return;
+
+    // Значок среднего в заголовке
+    const badge = card.querySelector('.badge');
+    badge.textContent = fmt(effAvg);
+    badge.style.background = colorFor(effAvg);
+
+    // Средние по четвертям
+    quarters.forEach((q) => {
+      const td = win.document.getElementById('qa-' + cardIdx + '-' + q.id);
+      if (!td) return;
+      const vals = effRow.list.filter((o) => o.q === q.id).map((o) => o.v);
+      if (!vals.length) {
+        td.className = 'mut'; td.removeAttribute('style'); td.innerHTML = '—';
+      } else {
+        const a = average(vals);
+        td.className = ''; td.style.background = colorFor(a, 0.6); td.innerHTML = `<b>${fmt(a)}</b>`;
+      }
+    });
+
+    // Итоговая ячейка
+    const tdTotal = win.document.getElementById('qa-' + cardIdx + '-total');
+    if (tdTotal) {
+      tdTotal.style.background = colorFor(effAvg, 0.6);
+      tdTotal.innerHTML = `<b>${fmt(effAvg)}</b>`;
+    }
+
+    // Подсказка цели (с текущей выбранной целью)
+    const activeBtn = card.querySelector('.tg.on');
+    const target = activeBtn ? +activeBtn.dataset.t : DEFAULT_TARGET;
+    const hint = buildTargetHint(effRow, target);
+    const goal = win.document.getElementById('goal-' + cardIdx);
+    goal.className = 'goal' + (hint.ok ? ' goal-ok' : '');
+    goal.innerHTML = hint.html;
+
+    // Кнопка сброса — показываем только если есть правки
+    const ov = overrides.get(cardIdx);
+    card.querySelector('.reset-edit').style.display = (ov && ov.size) ? 'inline-block' : 'none';
+  }
+
+  // ==========================================================================
   //  Вывод
   // ==========================================================================
   win.document.open();
@@ -627,19 +706,104 @@
 
   // Выбор желаемой оценки за четверть у предмета (обработчик вешаем отсюда,
   // а не через <script> в отчёте, чтобы не упереться в CSP сайта).
+
+  // Плавающий пикер для замены оценки
+  const editPicker = win.document.createElement('div');
+  editPicker.className = 'edit-picker noprint';
+  editPicker.innerHTML =
+    '<span class="ep-label">Заменить оценку на:</span>' +
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      .map((v) => `<button class="ep-btn" data-v="${v}" style="background:${colorFor(v)};color:white;font-weight:700">${v}</button>`)
+      .join('') +
+    '<button class="ep-cancel">отмена</button>';
+  win.document.body.appendChild(editPicker);
+
+  let pickerTarget = null; // { cardIdx, markIdx, span }
+
+  function showEditPicker(span) {
+    pickerTarget = { cardIdx: +span.dataset.card, markIdx: +span.dataset.mark, span };
+    const rect = span.getBoundingClientRect();
+    editPicker.style.left = Math.min(rect.left, win.innerWidth - 210) + 'px';
+    editPicker.style.top = (rect.bottom + 6) + 'px';
+    editPicker.classList.add('visible');
+  }
+
+  function hideEditPicker() {
+    editPicker.classList.remove('visible');
+    pickerTarget = null;
+  }
+
   win.document.addEventListener('click', (event) => {
-    const button = event.target.closest && event.target.closest('.tg');
-    if (!button) return;
+    const markSpan = event.target.closest && event.target.closest('.m[data-mark]');
+    const tg      = !markSpan && event.target.closest && event.target.closest('.tg');
+    const epBtn   = event.target.closest && event.target.closest('.ep-btn');
+    const epCancel = event.target.closest && event.target.closest('.ep-cancel');
+    const resetBtn = event.target.closest && event.target.closest('.reset-edit');
 
-    const index = +button.dataset.i;
-    const target = +button.dataset.t;
-    const hint = buildTargetHint(rows[index], target);
+    // Закрываем пикер при клике вне него
+    if (!editPicker.contains(event.target) && !markSpan) hideEditPicker();
 
-    const goal = win.document.getElementById('goal-' + index);
-    goal.className = 'goal' + (hint.ok ? ' goal-ok' : '');
-    goal.innerHTML = hint.html;
+    // Клик по оценке → открыть / закрыть пикер
+    if (markSpan) {
+      if (pickerTarget && pickerTarget.span === markSpan) { hideEditPicker(); return; }
+      showEditPicker(markSpan);
+      return;
+    }
 
-    button.parentElement.querySelectorAll('.tg').forEach((b) => b.classList.toggle('on', b === button));
+    // Выбор новой оценки из пикера
+    if (epBtn && pickerTarget) {
+      const { cardIdx, markIdx, span } = pickerTarget;
+      const newVal  = +epBtn.dataset.v;
+      const origVal = +span.dataset.orig;
+
+      if (!overrides.has(cardIdx)) overrides.set(cardIdx, new Map());
+      if (newVal === origVal) {
+        overrides.get(cardIdx).delete(markIdx);
+      } else {
+        overrides.get(cardIdx).set(markIdx, newVal);
+      }
+
+      // Обновляем чип оценки
+      const td = win.document.getElementById('mc-' + cardIdx + '-' + markIdx);
+      if (newVal !== origVal) {
+        td.innerHTML =
+          `<span class="m-orig">${origVal}</span>` +
+          `<span class="m m-changed" data-card="${cardIdx}" data-mark="${markIdx}" data-orig="${origVal}" style="background:${colorFor(newVal)}">${newVal}</span>`;
+      } else {
+        td.innerHTML = `<span class="m" data-card="${cardIdx}" data-mark="${markIdx}" data-orig="${origVal}" style="background:${colorFor(origVal)}">${origVal}</span>`;
+      }
+
+      recalcCard(cardIdx);
+      hideEditPicker();
+      return;
+    }
+
+    if (epCancel) { hideEditPicker(); return; }
+
+    // Сброс всех правок карточки
+    if (resetBtn) {
+      const cardIdx = +resetBtn.dataset.card;
+      overrides.delete(cardIdx);
+      rows[cardIdx].list.forEach((o, mi) => {
+        const td = win.document.getElementById('mc-' + cardIdx + '-' + mi);
+        if (td) td.innerHTML = `<span class="m" data-card="${cardIdx}" data-mark="${mi}" data-orig="${o.v}" style="background:${colorFor(o.v)}">${o.v}</span>`;
+      });
+      recalcCard(cardIdx);
+      return;
+    }
+
+    // Смена желаемой оценки за четверть (учитываем текущие правки)
+    if (tg) {
+      const index  = +tg.dataset.i;
+      const target = +tg.dataset.t;
+      const hint   = buildTargetHint(getEffRow(index), target);
+
+      const goal = win.document.getElementById('goal-' + index);
+      goal.className = 'goal' + (hint.ok ? ' goal-ok' : '');
+      goal.innerHTML = hint.html;
+
+      tg.parentElement.querySelectorAll('.tg').forEach((b) => b.classList.toggle('on', b === tg));
+    }
   });
 
   win.document.getElementById('pr').onclick = () => {
