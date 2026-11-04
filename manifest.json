@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Средний балл",
-  "version": "1.4.0",
-  "description": "Считает средний балл по оценкам в электронном дневнике.",
+  "version": "1.6.0",
+  "description": "Расчёт среднего балла по четвертям в электронном дневнике.",
   "permissions": [
     "activeTab",
     "scripting"
