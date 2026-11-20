@@ -661,15 +661,16 @@
       ? (isSem ? semesterQuarters(activeQuarterId)[0].id === q.id : q.id === activeQuarterId)
       : (!isSem || i % 2 === 0));
     const quarterGroups = displayedQuarters.map((q) => {
-      const entries = row.list.map((original, markIdx) => ({original, markIdx, effective: effRow.list[markIdx]}))
+      const entries = row.list.map((original, markIdx) => ({original, markIdx, value: overrides.get(index)?.has(markIdx) ? overrides.get(index).get(markIdx) : original.v}))
         .filter((entry) => periodMarks([entry.original], row.subject, q.id).length);
       if (!entries.length && !activeQuarterId) return '';
-      const details = entries.map(({original, effective, markIdx}) => {
-        const changed = original.v !== effective.v;
+      const details = entries.map(({original, value, markIdx}) => {
+        const removed = value === null;
+        const changed = !removed && original.v !== value;
         return `<tr><td>${formatRuDate(original.date)}</td>
           <td>${original.n ? escapeHtml(original.n) + ' урок' : ''}</td>
-          <td id="mc-${index}-${markIdx}">${changed ? `<span class="m-orig">${original.v}</span>` : ''}
-          <span class="m${changed ? ' m-changed' : ''}" data-card="${index}" data-mark="${markIdx}" data-orig="${original.v}" style="background:${colorFor(effective.v)}">${effective.v}</span></td></tr>`;
+          <td id="mc-${index}-${markIdx}"><span class="mark-edit">${changed ? `<span class="m-orig">${original.v}</span><span class="mark-arrow" aria-hidden="true">→</span>` : ''}
+          <span class="m${changed ? ' m-changed' : ''}${removed ? ' m-removed' : ''}" data-card="${index}" data-mark="${markIdx}" data-orig="${original.v}" title="${removed ? 'Исключена из расчёта — нажмите, чтобы вернуть' : 'Изменить оценку'}" style="${removed ? '' : 'background:' + colorFor(value)}">${removed ? `<s>${original.v}</s> <span class="removed-label">убрана</span>` : value}</span></span></td></tr>`;
       }).join('');
       const qAvg = average(periodMarks(effRow.list, row.subject, q.id).map((o) => o.v));
       return `<tr class="head"><th colspan="3">${escapeHtml(isSem ? semesterName(q.id) : q.name)}</th></tr>` +
@@ -684,7 +685,7 @@
       <div class="goal${hint.ok ? ' goal-ok' : ''}" id="goal-${index}">${hint.html}</div>
       <button class="reset-edit noprint" data-card="${index}" style="${ov && ov.size ? 'display:inline-block' : ''}">↺ сбросить правки</button>
       <table class="tbl"><tr><th>Дата</th><th>Урок</th><th>Оценка</th></tr>${quarterGroups || '<tr><td colspan="3" class="mut">Оценок пока нет</td></tr>'}
-      ${activeQuarterId ? '' : `<tr class="sum"><td>За год</td><td>${row.list.length} оц.</td><td><b>${fmtOrDash(yearVal)}</b></td></tr>`}
+      ${activeQuarterId ? '' : `<tr class="sum"><td>За год</td><td>${effRow.list.length} оц.</td><td><b>${fmtOrDash(yearVal)}</b></td></tr>`}
       </table></div>`;
   }
 
@@ -731,12 +732,17 @@
     }
     .m[data-mark] { cursor: pointer; }
     .m[data-mark]:hover { filter: brightness(1.12); }
+    .mark-edit { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .mark-arrow { color: rgb(120,125,140); }
+    .m.m-removed { background: rgb(236,237,243); color: rgb(95,100,115); font-weight: 600; }
+    .removed-label { font-size: 11px; }
     .m.m-changed { outline: 2px solid rgba(60,80,200,.55); outline-offset: 2px; }
-    .m-orig { font-size: 10px; text-decoration: line-through; color: rgb(170,173,190); vertical-align: middle; margin-right: 3px; }
+    .m-orig { font-size: 10px; text-decoration: line-through; color: rgb(170,173,190); vertical-align: middle; }
     .edit-picker { position: fixed; background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(20,25,60,.22); padding: 10px; display: none; flex-wrap: wrap; gap: 5px; width: 195px; z-index: 9999; }
     .edit-picker.visible { display: flex; }
     .ep-label { width: 100%; font-size: 11px; color: rgb(120,125,140); margin-bottom: 2px; }
     .ep-btn { margin: 0; flex: 0 0 calc(20% - 4px); padding: 6px 0; border-radius: 8px; font-size: 13px; text-align: center; }
+    .ep-remove { flex: 1 0 100%; padding: 6px; border-radius: 8px; font-size: 12px; background: rgb(255,238,236); color: rgb(150,45,40); }
     .ep-cancel { flex: 1 0 100%; margin-top: 4px; padding: 5px; border-radius: 8px; font-size: 12px; background: rgb(244,245,250); color: rgb(100,105,130); text-align: center; }
     .reset-edit { display: none; margin: 0 0 8px; padding: 4px 10px; border-radius: 8px; font-size: 12px; background: transparent; color: rgb(100,105,130); border: 1px solid rgb(215,218,230); }
     .reset-edit:hover { background: rgb(244,245,250); }
@@ -824,7 +830,7 @@
     if (!ov || !ov.size) return row;
     return {
       ...row,
-      list: row.list.map((o, mi) => ov.has(mi) ? { ...o, v: ov.get(mi) } : o),
+      list: row.list.map((o, mi) => ov.has(mi) ? { ...o, v: ov.get(mi) } : o).filter((o) => o.v !== null),
     };
   }
 
@@ -858,7 +864,8 @@
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
       .map((v) => `<button class="ep-btn" data-v="${v}" style="background:${colorFor(v)};color:white;font-weight:700">${v}</button>`)
       .join('') +
-    '<button class="ep-cancel">отмена</button>';
+    '<button class="ep-remove">Убрать из расчёта</button>' +
+    '<button class="ep-cancel">Отмена</button>';
   win.document.body.appendChild(editPicker);
 
   let pickerTarget = null; // { cardIdx, markIdx, span }
@@ -866,9 +873,13 @@
   function showEditPicker(span) {
     pickerTarget = { cardIdx: +span.dataset.card, markIdx: +span.dataset.mark, span };
     const rect = span.getBoundingClientRect();
-    editPicker.style.left = Math.min(rect.left, win.innerWidth - 210) + 'px';
-    editPicker.style.top = (rect.bottom + 6) + 'px';
     editPicker.classList.add('visible');
+    const pickerRect = editPicker.getBoundingClientRect();
+    const left = Math.max(8, Math.min(rect.left, win.innerWidth - pickerRect.width - 8));
+    const top = rect.bottom + 6 + pickerRect.height <= win.innerHeight
+      ? rect.bottom + 6 : Math.max(8, rect.top - pickerRect.height - 6);
+    editPicker.style.left = left + 'px';
+    editPicker.style.top = top + 'px';
   }
 
   function hideEditPicker() {
@@ -881,6 +892,7 @@
     const tg       = !markSpan && event.target.closest && event.target.closest('.tg');
     const epBtn    = event.target.closest && event.target.closest('.ep-btn');
     const epCancel = event.target.closest && event.target.closest('.ep-cancel');
+    const epRemove = event.target.closest && event.target.closest('.ep-remove');
     const resetBtn = event.target.closest && event.target.closest('.reset-edit');
     const periodBtn = event.target.closest && event.target.closest('.period-tab');
     const selectAllBtn = event.target.closest && event.target.closest('#sel-all');
@@ -913,9 +925,9 @@
     }
 
     // Выбор новой оценки из пикера
-    if (epBtn && pickerTarget) {
+    if ((epBtn || epRemove) && pickerTarget) {
       const { cardIdx, markIdx, span } = pickerTarget;
-      const newVal  = +epBtn.dataset.v;
+      const newVal  = epRemove ? null : +epBtn.dataset.v;
       const origVal = +span.dataset.orig;
 
       if (!overrides.has(cardIdx)) overrides.set(cardIdx, new Map());
@@ -923,16 +935,6 @@
         overrides.get(cardIdx).delete(markIdx);
       } else {
         overrides.get(cardIdx).set(markIdx, newVal);
-      }
-
-      // Обновляем чип оценки
-      const td = win.document.getElementById('mc-' + cardIdx + '-' + markIdx);
-      if (newVal !== origVal) {
-        td.innerHTML =
-          `<span class="m-orig">${origVal}</span>` +
-          `<span class="m m-changed" data-card="${cardIdx}" data-mark="${markIdx}" data-orig="${origVal}" style="background:${colorFor(newVal)}">${newVal}</span>`;
-      } else {
-        td.innerHTML = `<span class="m" data-card="${cardIdx}" data-mark="${markIdx}" data-orig="${origVal}" style="background:${colorFor(origVal)}">${origVal}</span>`;
       }
 
       hideEditPicker();
@@ -946,10 +948,6 @@
     if (resetBtn) {
       const cardIdx = +resetBtn.dataset.card;
       overrides.delete(cardIdx);
-      rows[cardIdx].list.forEach((o, mi) => {
-        const td = win.document.getElementById('mc-' + cardIdx + '-' + mi);
-        if (td) td.innerHTML = `<span class="m" data-card="${cardIdx}" data-mark="${mi}" data-orig="${o.v}" style="background:${colorFor(o.v)}">${o.v}</span>`;
-      });
       updateDashboard();
       return;
     }
