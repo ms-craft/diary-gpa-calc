@@ -309,7 +309,7 @@
    */
   function computeQuarterGpa(quarterId) {
     const quarterRows = rows.filter((r) => !semesterSubjects.has(r.subject));
-    const targetRows = quarterRows.length ? quarterRows : rows;
+    const targetRows = quarterRows;
 
     const roundedSubjectGrades = targetRows
       .map((r) => {
@@ -328,19 +328,14 @@
    * Сначала средний балл каждого полугодового предмета округляется до целого,
    * а затем вычисляется среднее арифметическое по ним.
    */
-  function computeSemesterAvg() {
+  function computeSemesterAvg(quarterId) {
     const sel = rows.filter((r) => semesterSubjects.has(r.subject));
-    if (!sel.length) return null;
-
-    const roundedGrades = sel
-      .map((r) => {
-        const idx = rows.indexOf(r);
-        const marks = getEffRow(idx).list.map((o) => o.v);
-        const avg = average(marks);
-        return avg !== null ? Math.round(avg) : null;
-      })
-      .filter((v) => v !== null);
-
+    const roundedGrades = sel.map((r) => {
+      const list = getEffRow(rows.indexOf(r)).list;
+      const values = periodMarks(list, r.subject, quarterId).map((o) => o.v);
+      const avg = average(values);
+      return avg !== null ? Math.round(avg) : null;
+    }).filter((v) => v !== null);
     return average(roundedGrades);
   }
 
@@ -351,7 +346,17 @@
 
   let activeQuarterId = currentQuarter ? currentQuarter.id : null;
   const shownQuarter = () => quarters.find((q) => q.id === activeQuarterId) || currentQuarter;
-  const markScope = (list) => activeQuarterId ? list.filter((o) => o.q === activeQuarterId) : list;
+  const semesterQuarters = (quarterId) => {
+    const index = quarters.findIndex((q) => q.id === quarterId);
+    return index < 0 ? [] : quarters.slice(Math.floor(index / 2) * 2, Math.floor(index / 2) * 2 + 2);
+  };
+  const semesterName = (quarterId) => (Math.floor(quarters.findIndex((q) => q.id === quarterId) / 2) + 1) + ' полугодие';
+  const periodMarks = (list, subject, quarterId) => {
+    if (!quarterId) return list;
+    const ids = semesterSubjects.has(subject) ? semesterQuarters(quarterId).map((q) => q.id) : [quarterId];
+    return list.filter((o) => ids.includes(o.q));
+  };
+  const markScope = (list, subject) => periodMarks(list, subject, activeQuarterId);
   const fmtOrDash = (value) => value == null ? '—' : fmt(value);
 
   /**
@@ -391,7 +396,7 @@
   function visibleRowsByAvg() {
     return rows.map((r, index) => ({
       subject: r.subject,
-      avg: average(markScope(getEffRow(index).list).map((m) => m.v)),
+      avg: average(markScope(getEffRow(index).list, r.subject).map((m) => m.v)),
     })).filter((r) => r.avg !== null).sort((a, b) => b.avg - a.avg);
   }
 
@@ -426,7 +431,7 @@
   function renderDistributionChart() {
     const W = 520, H = 240, LEFT = 14, BOTTOM = 34, TOP = 26;
     const counts = Array(11).fill(0);
-    rows.forEach((r, i) => markScope(getEffRow(i).list).forEach(({v}) => {
+    rows.forEach((r, i) => markScope(getEffRow(i).list, r.subject).forEach(({v}) => {
       if (v >= 0 && v <= 10) counts[v]++;
     }));
     const maxCount = Math.max(...counts, 1);
@@ -458,7 +463,7 @@
     </div>`;
 
   function renderKpis() {
-    const scoped = rows.flatMap((r, i) => markScope(getEffRow(i).list));
+    const scoped = rows.flatMap((r, i) => markScope(getEffRow(i).list, r.subject));
     const all = scoped.map((o) => o.v);
     const averages = visibleRowsByAvg();
     const best = averages[0], worst = averages[averages.length - 1];
@@ -467,7 +472,7 @@
       ? computeQuarterGpa(activeQuarterId)
       : average(quarters.map((q) => computeQuarterGpa(q.id)).filter((v) => v !== null));
 
-    const semesterGpa = computeSemesterAvg();
+    const semesterPeriods = activeQuarterId ? [shownQuarter()] : quarters.filter((q, i) => i % 2 === 0);
 
     const kpis = [];
 
@@ -497,12 +502,15 @@
       }
     }
 
-    if (semesterGpa !== null) {
-      const semesterCount = rows.filter((r) => semesterSubjects.has(r.subject)).length;
+    for (const q of semesterPeriods) {
+      const semesterGpa = computeSemesterAvg(q.id);
+      if (semesterGpa === null) continue;
+      const semesterCount = rows.filter((r, i) => semesterSubjects.has(r.subject) &&
+        periodMarks(getEffRow(i).list, r.subject, q.id).length).length;
       kpis.push(renderKpi(
-        'Оценка за полугодие (расчёт)',
+        escapeHtml(semesterName(q.id)) + ' (расчёт)',
         fmt(semesterGpa),
-        semesterCount + ' из ' + rows.length + ' предм.',
+        semesterCount + ' предм.',
         colorFor(semesterGpa, 0.55)
       ));
     }
@@ -524,29 +532,33 @@
       (!activeQuarterId ? '<th>Общий средний</th>' : '') + '<th>Оценок</th></tr>';
 
     function summaryCell(r, i, q) {
-      const mean = quarterAvg(getEffRow(i).list, q.id);
+      const mean = average(periodMarks(getEffRow(i).list, r.subject, q.id).map((o) => o.v));
       return `<td style="${mean == null ? '' : 'background:' + colorFor(mean, 0.82)}">` +
         `<div>${mean === null ? '<span class="mut">—</span>' : '<b>' + fmt(mean) + '</b> <span class="mut">(' + Math.round(mean) + ')</span>'}</div></td>`;
     }
 
     const body = rows.map((r, i) => {
-      const vals = markScope(getEffRow(i).list);
-      const subjectQuarterGrades = quarters
+      const vals = markScope(getEffRow(i).list, r.subject);
+      const isSem = semesterSubjects.has(r.subject);
+      const subjectQuarterGrades = quarters.filter((q, index) => !isSem || index % 2 === 0)
         .map((q) => {
-          const m = quarterAvg(getEffRow(i).list, q.id);
+          const m = average(periodMarks(getEffRow(i).list, r.subject, q.id).map((o) => o.v));
           return m !== null ? Math.round(m) : null;
         })
         .filter((x) => x !== null);
       const subjectOverall = average(subjectQuarterGrades);
-      const isSem = semesterSubjects.has(r.subject);
       const semTag = isSem ? ' <span class="mut" style="font-size:11px;font-weight:normal">(полугодие)</span>' : '';
 
       return `<tr><td>${escapeHtml(r.subject)}${semTag}</td>` +
-        visibleQuarters.map((q) => summaryCell(r, i, q)).join('') +
+        visibleQuarters.map((q, index) => {
+          if (!isSem || activeQuarterId) return summaryCell(r, i, q);
+          if (index % 2) return '';
+          return summaryCell(r, i, q).replace('<td ', '<td colspan="' + Math.min(2, visibleQuarters.length - index) + '" ');
+        }).join('') +
         (!activeQuarterId ? avgCell(subjectOverall) : '') + `<td>${vals.length}</td></tr>`;
     }).join('');
 
-    const total = rows.flatMap((r, i) => markScope(getEffRow(i).list));
+    const total = rows.flatMap((r, i) => markScope(getEffRow(i).list, r.subject));
     const quarterGpas = quarters.map((q) => computeQuarterGpa(q.id)).filter((v) => v !== null);
     const overallGpa = average(quarterGpas);
 
@@ -564,7 +576,7 @@
    * Запас, когда цель уже достигнута: какая самая низкая оценка допустима
    * и сколько оценок каждого достоинства ниже цели можно получить.
    */
-  function buildReserveHtml(values, target) {
+  function buildReserveHtml(values, target, period) {
     const options = [];
     for (let mark = target - 1; mark >= MIN_MARK; mark--) {
       const count = marksAllowed(values, target, mark);
@@ -582,7 +594,7 @@
       .join(' <span class="mut">или</span> ');
 
     return (
-      `Запас: самая низкая оценка, после которой за четверть всё ещё будет ${markChip(target)} — ${markChip(lowest)}. ` +
+      `Запас: самая низкая оценка, после которой за ${period} всё ещё будет ${markChip(target)} — ${markChip(lowest)}. ` +
       `Сколько таких оценок можно получить (каждый вариант отдельно): ${list}. ` +
       `Оценки ${target} и выше не опасны.`
     );
@@ -594,8 +606,10 @@
    */
   function buildTargetHint(row, target) {
     const q = shownQuarter();
-    const qName = escapeHtml(q.name);
-    const values = row.list.filter((o) => o.q === q.id).map((o) => o.v);
+    const isSem = semesterSubjects.has(row.subject);
+    const qName = escapeHtml(isSem ? semesterName(q.id) : q.name);
+    const period = isSem ? 'полугодие' : 'четверть';
+    const values = periodMarks(row.list, row.subject, q.id).map((o) => o.v);
 
     if (!values.length) {
       return {
@@ -611,7 +625,7 @@
         ok: true,
         html:
           `${qName}: ${markChip(target)} уже есть (средний ${fmt(current)})${above} ✓` +
-          `<div class="reserve">${buildReserveHtml(values, target)}</div>`,
+          `<div class="reserve">${buildReserveHtml(values, target, period)}</div>`,
       };
     }
 
@@ -628,24 +642,27 @@
     };
   }
 
-  function renderTargetPicker(index) {
+  function renderTargetPicker(index, isSem) {
     const chosen = selectedTargets.get(index) || DEFAULT_TARGET;
     const buttons = TARGET_OPTIONS.map((t) =>
       `<button class="tg${t === chosen ? ' on' : ''}" data-i="${index}" data-t="${t}">${t}</button>`).join('');
-    return `<div class="picker noprint"><span class="mut">Хочу за четверть:</span>${buttons}</div>`;
+    return `<div class="picker noprint"><span class="mut">Хочу за ${isSem ? 'полугодие' : 'четверть'}:</span>${buttons}</div>`;
   }
 
   function renderCard(row, index) {
     const effRow = getEffRow(index);
     const target = selectedTargets.get(index) || DEFAULT_TARGET;
     const hint = buildTargetHint(effRow, target);
-    const val = average(markScope(effRow.list).map((o) => o.v));
+    const val = average(markScope(effRow.list, row.subject).map((o) => o.v));
     const yearVal = average(effRow.list.map((o) => o.v));
     const shownAvg = activeQuarterId ? val : yearVal;
-    const displayedQuarters = quarters.filter((q) => !activeQuarterId || q.id === activeQuarterId);
+    const isSem = semesterSubjects.has(row.subject);
+    const displayedQuarters = quarters.filter((q, i) => activeQuarterId
+      ? (isSem ? semesterQuarters(activeQuarterId)[0].id === q.id : q.id === activeQuarterId)
+      : (!isSem || i % 2 === 0));
     const quarterGroups = displayedQuarters.map((q) => {
       const entries = row.list.map((original, markIdx) => ({original, markIdx, effective: effRow.list[markIdx]}))
-        .filter((entry) => entry.original.q === q.id);
+        .filter((entry) => periodMarks([entry.original], row.subject, q.id).length);
       if (!entries.length && !activeQuarterId) return '';
       const details = entries.map(({original, effective, markIdx}) => {
         const changed = original.v !== effective.v;
@@ -654,17 +671,16 @@
           <td id="mc-${index}-${markIdx}">${changed ? `<span class="m-orig">${original.v}</span>` : ''}
           <span class="m${changed ? ' m-changed' : ''}" data-card="${index}" data-mark="${markIdx}" data-orig="${original.v}" style="background:${colorFor(effective.v)}">${effective.v}</span></td></tr>`;
       }).join('');
-      const qAvg = quarterAvg(effRow.list, q.id);
-      return `<tr class="head"><th colspan="3">${escapeHtml(q.name)}</th></tr>` +
+      const qAvg = average(periodMarks(effRow.list, row.subject, q.id).map((o) => o.v));
+      return `<tr class="head"><th colspan="3">${escapeHtml(isSem ? semesterName(q.id) : q.name)}</th></tr>` +
         (details || '<tr><td colspan="3" class="mut">Текущих оценок нет</td></tr>') +
         `<tr class="quarter-footer"><td colspan="3">Средний: <b>${fmtOrDash(qAvg)}</b>${qAvg !== null ? ` <span class="mut">(округлённый: <b>${Math.round(qAvg)}</b>)</span>` : ''}</td></tr>`;
     }).join('');
     const ov = overrides.get(index);
-    const isSem = semesterSubjects.has(row.subject);
     const semBadge = isSem ? '<span class="badge" style="background:rgb(232,235,250);color:rgb(60,80,200);font-size:12px;margin-left:8px">по полугодиям</span>' : '';
     return `<div class="card" data-card="${index}">
       <h3><span>${escapeHtml(row.subject)}${semBadge}</span><span class="badge" style="${shownAvg == null ? 'background:rgb(230,232,240)' : 'background:' + colorFor(shownAvg)}">${fmtOrDash(shownAvg)}</span></h3>
-      ${renderTargetPicker(index)}
+      ${renderTargetPicker(index, isSem)}
       <div class="goal${hint.ok ? ' goal-ok' : ''}" id="goal-${index}">${hint.html}</div>
       <button class="reset-edit noprint" data-card="${index}" style="${ov && ov.size ? 'display:inline-block' : ''}">↺ сбросить правки</button>
       <table class="tbl"><tr><th>Дата</th><th>Урок</th><th>Оценка</th></tr>${quarterGroups || '<tr><td colspan="3" class="mut">Оценок пока нет</td></tr>'}
